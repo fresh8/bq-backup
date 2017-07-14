@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+import os
+import sys
+import argparse
+from datetime import datetime, timedelta as td
+
+import toml
+from google.cloud import bigquery
+
+"""
+[[datasets]]
+name = "myevents"
+prefix = "event_"
+bucket = "mycorp-backups-myevents"
+
+[[datasets]]
+name = "myevents2"
+prefix = "event_"
+bucket = "mycorp-backups-myevents2"
+"""
+
+DEFAULT_CONFIG_PATH = "/etc/bq-backup/config.toml"
+
+
+def read_config(path):
+    with open(path) as f:
+        config = toml.loads(f.read())
+        return config
+
+def yesterday():
+    return (datetime.now()-td(days=1)).strftime("%Y%m%d")
+
+def export(client, job_request):
+    dataset = client.dataset(job_request["name"])
+    table_name = job_request["prefix"]+yesterday()
+    table = dataset.table(table_name)
+
+    job = client.extract_table_to_storage(
+        "backup-{}.{}".format(job_request["name"], table_name),
+        table,
+        "gs://{}/{}*.ndjson.gz".format(job_request["bucket"], table_name)
+        )
+    job.destination_format = "NEWLINE_DELIMITED_JSON"
+    job.compression = "GZIP"
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH,
+                        help="Configuration file path")
+    args = parser.parse_args()
+    if not os.path.exists(args.config):
+        print("Config file {} does not exist".format(args.config),
+              file=sys.stderr)
+        sys.exit(1)
+    config = read_config(args.config)
+
+    client = bigquery.Client()
+    for job_request in config["datasets"]:
+        export(client, job_request)
+
+if __name__ == "__main__":
+    main()

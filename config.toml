@@ -1,0 +1,9 @@
+[[datasets]]
+name = "myevents"
+prefix = "event_"
+bucket = "mycorp-backups-myevents"
+
+[[datasets]]
+name = "myevents2"
+prefix = "event_"
+bucket = "mycorp-backups-myevents2"
