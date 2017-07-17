@@ -2,12 +2,16 @@
 import os
 import sys
 import argparse
+import asyncio
+import time
 from datetime import datetime, timedelta as td
 
 import toml
 from google.cloud import bigquery
 
 """
+project = "mycorp1"
+
 [[datasets]]
 name = "myevents"
 prefix = "event_"
@@ -30,18 +34,30 @@ def read_config(path):
 def yesterday():
     return (datetime.now()-td(days=1)).strftime("%Y%m%d")
 
-def export(client, job_request):
+async def export(client, job_request):
     dataset = client.dataset(job_request["name"])
     table_name = job_request["prefix"]+yesterday()
     table = dataset.table(table_name)
 
+    ts = int(time.time())
     job = client.extract_table_to_storage(
-        "backup-{}.{}".format(job_request["name"], table_name),
+        "backup-{}-{}-{}".format(job_request["name"], table_name, ts),
         table,
         "gs://{}/{}*.ndjson.gz".format(job_request["bucket"], table_name)
         )
     job.destination_format = "NEWLINE_DELIMITED_JSON"
     job.compression = "GZIP"
+    job.begin()
+    retry_count = 100
+    while retry_count > 0 and job.state.lower() != "done":
+        retry_count -= 1
+        await asyncio.sleep(10)
+        job.reload()
+    if job.state.lower() == "done":
+        print("success")
+    else:
+        print("failed")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -54,9 +70,12 @@ def main():
         sys.exit(1)
     config = read_config(args.config)
 
-    client = bigquery.Client()
-    for job_request in config["datasets"]:
-        export(client, job_request)
+    client = bigquery.Client(project=config["project"])
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete
+    loop.run_until_complete(asyncio.gather(*[export(client, job_request)
+                     for job_request in config["datasets"]]))
+    loop.close()
 
 if __name__ == "__main__":
     main()
