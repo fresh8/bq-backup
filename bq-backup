@@ -22,9 +22,16 @@ def read_config(path):
         return config
 
 def yesterday():
+    """
+    Return yesterday's date in YYYYMMDD format.
+    """
     return (datetime.now()-td(days=1)).strftime("%Y%m%d")
 
 class Slack(object):
+    """
+    Helper class for sending job notifications.
+    If there is no Slack config nothing will be done.
+    """
     job_text = {
         "success": "Backup succeeded",
         "failed": "Backup failed",
@@ -46,6 +53,12 @@ class Slack(object):
             self.config = config["slack"]
 
     def maybe_post(self, status, table, job_request):
+        """
+        Send job notification to Slack if enabled.
+        """
+        if not self.enabled:
+            return
+
         fields = [
             {
                 "title": "Project",
@@ -69,9 +82,6 @@ class Slack(object):
             }
         ]
 
-        if not self.enabled:
-            return
-
         payload = {
             "channel": self.config["channel"],
             "text": Slack.job_text[status],
@@ -86,6 +96,9 @@ class Slack(object):
         requests.post(self.config["webhook"], data={"payload": json.dumps(payload)})
 
 async def export(client, config, job_request):
+    """
+    Export this specific dataset
+    """
     slack = Slack(config)
 
     dataset = client.dataset(job_request["name"])
@@ -101,6 +114,8 @@ async def export(client, config, job_request):
     job.destination_format = "NEWLINE_DELIMITED_JSON"
     job.compression = "GZIP"
     job.begin()
+
+    # We will wait job_wait seconds for this job to return a status
     retry_count = int(config["job_wait"])/JOB_SLEEP
     while retry_count > 0 and job.state.lower() != "done":
         retry_count -= 1
@@ -125,7 +140,6 @@ def main():
 
     client = bigquery.Client(project=config["project"])
     loop = asyncio.get_event_loop()
-    loop.run_until_complete
     loop.run_until_complete(asyncio.gather(*[export(client, config, job_request)
                      for job_request in config["datasets"]]))
     loop.close()
