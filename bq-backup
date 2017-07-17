@@ -3,10 +3,12 @@ import os
 import sys
 import argparse
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta as td
 
 import toml
+import requests
 from google.cloud import bigquery
 
 """
@@ -36,7 +38,70 @@ def read_config(path):
 def yesterday():
     return (datetime.now()-td(days=1)).strftime("%Y%m%d")
 
+class Slack(object):
+    job_text = {
+        "success": "Backup succeeded",
+        "failed": "Backup failed",
+    }
+
+    job_colour = {
+        "success": "#009900",
+        "failed": "#990000",
+    }
+
+    @staticmethod
+    def fallback(fields):
+        return " | ".join(["{}: {}".format(field["title"], field["value"]) for field in fields])
+
+    def __init__(self, config):
+        self.project = config["project"]
+        self.enabled = "slack" in config
+        if self.enabled:
+            self.config = config["slack"]
+
+    def maybe_post(self, status, table, job_request):
+        fields = [
+            {
+                "title": "Project",
+                "value": self.project,
+                "short": True
+            },
+            {
+                "title": "Table",
+                "value": table,
+                "short": True
+            },
+            {
+                "title": "Dataset",
+                "value": job_request["name"],
+                "short": True
+            },
+            {
+                "title": "Bucket",
+                "value": job_request["bucket"],
+                "short": True
+            }
+        ]
+
+        if not self.enabled:
+            return
+
+        payload = {
+            "channel": self.config["channel"],
+            "text": Slack.job_text[status],
+            "attachments": [
+                {
+                    "fallback": Slack.fallback(fields),
+                    "color": Slack.job_colour[status],
+                    "fields": fields,
+                }
+            ]
+        }
+        requests.post(self.config["webhook"], data={"payload": json.dumps(payload)})
+
 async def export(client, config, job_request):
+    slack = Slack(config)
+
     dataset = client.dataset(job_request["name"])
     table_name = job_request["prefix"]+yesterday()
     table = dataset.table(table_name)
@@ -55,10 +120,10 @@ async def export(client, config, job_request):
         retry_count -= 1
         await asyncio.sleep(JOB_SLEEP)
         job.reload()
+    status = "failed"
     if job.state.lower() == "done":
-        print("success")
-    else:
-        print("failed")
+        status = "success"
+    slack.maybe_post(status=status, table=table_name, job_request=job_request)
 
 
 def main():
