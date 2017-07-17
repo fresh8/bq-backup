@@ -13,6 +13,7 @@ from google.cloud import bigquery
 
 
 DEFAULT_CONFIG_PATH = "/etc/bq-backup/config.toml"
+# Number of seconds to wait before checking job status again
 JOB_SLEEP = 10
 
 
