@@ -1,3 +1,6 @@
+project = "mycorp1"
+job_wait = 3600
+
 [[datasets]]
 name = "myevents"
 prefix = "event_"

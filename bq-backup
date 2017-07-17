@@ -11,6 +11,7 @@ from google.cloud import bigquery
 
 """
 project = "mycorp1"
+job_wait = 3600
 
 [[datasets]]
 name = "myevents"
@@ -24,6 +25,7 @@ bucket = "mycorp-backups-myevents2"
 """
 
 DEFAULT_CONFIG_PATH = "/etc/bq-backup/config.toml"
+JOB_SLEEP = 10
 
 
 def read_config(path):
@@ -34,7 +36,7 @@ def read_config(path):
 def yesterday():
     return (datetime.now()-td(days=1)).strftime("%Y%m%d")
 
-async def export(client, job_request):
+async def export(client, config, job_request):
     dataset = client.dataset(job_request["name"])
     table_name = job_request["prefix"]+yesterday()
     table = dataset.table(table_name)
@@ -48,10 +50,10 @@ async def export(client, job_request):
     job.destination_format = "NEWLINE_DELIMITED_JSON"
     job.compression = "GZIP"
     job.begin()
-    retry_count = 100
+    retry_count = int(config["job_wait"])/JOB_SLEEP
     while retry_count > 0 and job.state.lower() != "done":
         retry_count -= 1
-        await asyncio.sleep(10)
+        await asyncio.sleep(JOB_SLEEP)
         job.reload()
     if job.state.lower() == "done":
         print("success")
@@ -73,7 +75,7 @@ def main():
     client = bigquery.Client(project=config["project"])
     loop = asyncio.get_event_loop()
     loop.run_until_complete
-    loop.run_until_complete(asyncio.gather(*[export(client, job_request)
+    loop.run_until_complete(asyncio.gather(*[export(client, config, job_request)
                      for job_request in config["datasets"]]))
     loop.close()
 
