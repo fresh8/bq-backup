@@ -28,7 +28,7 @@ def yesterday():
     """
     return (datetime.now()-td(days=1)).strftime("%Y%m%d")
 
-class Slack(object):
+class Slack:
     """
     Helper class for sending job notifications.
     If there is no Slack config nothing will be done.
@@ -45,6 +45,10 @@ class Slack(object):
 
     @staticmethod
     def fallback(fields):
+        """
+        Generate a text string version of Slack message attachment fields.
+        e.g. Project: a | Table: b | Dataset: c | Bucket: d
+        """
         return " | ".join(["{}: {}".format(field["title"], field["value"]) for field in fields])
 
     def __init__(self, config):
@@ -53,12 +57,10 @@ class Slack(object):
         if self.enabled:
             self.config = config["slack"]
 
-    def maybe_post(self, status, table, job_request):
+    def post(self, status, table, job_request):
         """
-        Send job notification to Slack if enabled.
+        Send job notification to Slack.
         """
-        if not self.enabled:
-            return
 
         fields = [
             {
@@ -125,7 +127,8 @@ async def export(client, config, job_request):
     status = "failed"
     if job.state.lower() == "done":
         status = "success"
-    slack.maybe_post(status=status, table=table_name, job_request=job_request)
+    if slack.enabled:
+        slack.post(status=status, table=table_name, job_request=job_request)
 
 
 def main():
