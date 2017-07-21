@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+import os
+import sys
+import argparse
+import asyncio
+import json
+import time
+from datetime import datetime, timedelta as td
+
+import toml
+import requests
+from google.cloud import bigquery
+
+
+DEFAULT_CONFIG_PATH = "/etc/bq-backup/config.toml"
+# Number of seconds to wait before checking job status again
+JOB_SLEEP = 10
+
+
+def read_config(path):
+    with open(path) as f:
+        config = toml.loads(f.read())
+        return config
+
+def yesterday():
+    """
+    Return yesterday's date in YYYYMMDD format.
+    """
+    return (datetime.now()-td(days=1)).strftime("%Y%m%d")
+
+class Slack:
+    """
+    Helper class for sending job notifications.
+    If there is no Slack config nothing will be done.
+    """
+    job_text = {
+        "success": "Backup succeeded",
+        "failed": "Backup failed",
+    }
+
+    job_colour = {
+        "success": "#009900",
+        "failed": "#990000",
+    }
+
+    @staticmethod
+    def fallback(fields):
+        """
+        Generate a text string version of Slack message attachment fields.
+        e.g. Project: a | Table: b | Dataset: c | Bucket: d
+        """
+        return " | ".join(["{}: {}".format(field["title"], field["value"]) for field in fields])
+
+    def __init__(self, config):
+        self.project = config["project"]
+        self.enabled = "slack" in config
+        if self.enabled:
+            self.config = config["slack"]
+
+    def post(self, status, table, job_request):
+        """
+        Send job notification to Slack.
+        """
+
+        fields = [
+            {
+                "title": "Project",
+                "value": self.project,
+                "short": True
+            },
+            {
+                "title": "Table",
+                "value": table,
+                "short": True
+            },
+            {
+                "title": "Dataset",
+                "value": job_request["name"],
+                "short": True
+            },
+            {
+                "title": "Bucket",
+                "value": job_request["bucket"],
+                "short": True
+            }
+        ]
+
+        payload = {
+            "channel": self.config["channel"],
+            "text": Slack.job_text[status],
+            "attachments": [
+                {
+                    "fallback": Slack.fallback(fields),
+                    "color": Slack.job_colour[status],
+                    "fields": fields,
+                }
+            ]
+        }
+        requests.post(self.config["webhook"], data={"payload": json.dumps(payload)})
+
+async def export(client, config, job_request):
+    """
+    Export this specific dataset
+    """
+    slack = Slack(config)
+
+    dataset = client.dataset(job_request["name"])
+    table_name = job_request["prefix"]+yesterday()
+    table = dataset.table(table_name)
+
+    ts = int(time.time())
+    job = client.extract_table_to_storage(
+        "backup-{}-{}-{}".format(job_request["name"], table_name, ts),
+        table,
+        "gs://{}/{}*.ndjson.gz".format(job_request["bucket"], table_name)
+        )
+    job.destination_format = "NEWLINE_DELIMITED_JSON"
+    job.compression = "GZIP"
+    job.begin()
+
+    # We will wait job_wait seconds for this job to return a status
+    retry_count = int(config["job_wait"])/JOB_SLEEP
+    while retry_count > 0 and job.state.lower() != "done":
+        retry_count -= 1
+        await asyncio.sleep(JOB_SLEEP)
+        job.reload()
+    status = "failed"
+    if job.state.lower() == "done":
+        status = "success"
+    if slack.enabled:
+        slack.post(status=status, table=table_name, job_request=job_request)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config", default=DEFAULT_CONFIG_PATH,
+                        help="Configuration file path")
+    args = parser.parse_args()
+    if not os.path.exists(args.config):
+        print("Config file {} does not exist".format(args.config),
+              file=sys.stderr)
+        sys.exit(1)
+    config = read_config(args.config)
+
+    client = bigquery.Client(project=config["project"])
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(asyncio.gather(*[export(client, config, job_request)
+                     for job_request in config["datasets"]]))
+    loop.close()
+
+if __name__ == "__main__":
+    main()

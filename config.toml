@@ -1,0 +1,16 @@
+project = "mycorp1"
+job_wait = 3600
+
+[slack]
+webhook = "https://hooks.slack.com/services/Tx/Bx/Yx"
+channel = "#mycorp-log"
+
+[[datasets]]
+name = "myevents"
+prefix = "event_"
+bucket = "mycorp-backups-myevents"
+
+[[datasets]]
+name = "myevents2"
+prefix = "event_"
+bucket = "mycorp-backups-myevents2"
