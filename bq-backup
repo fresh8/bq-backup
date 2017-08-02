@@ -57,7 +57,7 @@ class Slack:
         if self.enabled:
             self.config = config["slack"]
 
-    def post(self, status, table, job_request):
+    def post(self, status, table, job_request, errors=[]):
         """
         Send job notification to Slack.
         """
@@ -96,6 +96,24 @@ class Slack:
                 }
             ]
         }
+        for err in errors:
+            payload["attachments"].append({
+                "fallback": err,
+                "color": Slack.job_colour[status],
+                "fields": [
+                    {
+                        "title": "Error",
+                        "value": err["reason"],
+                        "short": True
+                    },
+                    {
+                        "title": "Description",
+                        "value": err["message"],
+                        "short": True
+                    }
+                ]
+            })
+
         requests.post(self.config["webhook"], data={"payload": json.dumps(payload)})
 
 async def export(client, config, job_request):
@@ -125,10 +143,11 @@ async def export(client, config, job_request):
         await asyncio.sleep(JOB_SLEEP)
         job.reload()
     status = "failed"
-    if job.state.lower() == "done":
+    if len(job.errors) == 0:
         status = "success"
     if slack.enabled:
-        slack.post(status=status, table=table_name, job_request=job_request)
+        slack.post(status=status, table=table_name, job_request=job_request,
+                   errors=job.errors)
 
 
 def main():
