@@ -143,11 +143,11 @@ async def export(client, config, job_request):
         await asyncio.sleep(JOB_SLEEP)
         job.reload()
     status = "failed"
-    if len(job.errors) == 0:
+    if job.errors is None or len(job.errors) == 0:
         status = "success"
     if slack.enabled:
         slack.post(status=status, table=table_name, job_request=job_request,
-                   errors=job.errors)
+                   errors=job.errors or [])
 
 
 def main():
